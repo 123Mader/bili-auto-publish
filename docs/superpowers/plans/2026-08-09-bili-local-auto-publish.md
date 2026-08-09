@@ -2,19 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 纯本地守护脚本：扫投放目录的数字命名视频 → B站官方曲库配乐 → ffmpeg 制作 → 每晚 20:00 经 B站官方投稿接口发布（原创标注，全合规）。
+**Goal:** 纯本地守护脚本：扫投放目录的数字命名视频 → B站官方曲库配乐 → ffmpeg 制作 → 每晚 20:00 经 **bilitool（官方接口客户端库）** 发布（原创标注，全合规）。
 
-**Architecture:** `bili_daemon.py` 常驻（300s 循环）驱动状态机 `waiting→producing→ready→uploaded→done`，failed 重试 3 次。组件：Scanner（扫描投放目录）、Maker（ffmpeg 制作）、MusicPicker（B站官方曲库）、Uploader（官方投稿 API）、Scheduler（20:00 触发）。
+**Architecture:** `bili_daemon.py` 常驻（300s 循环）驱动状态机 `waiting→producing→ready→uploaded→done`，failed 重试 3 次。组件：Scanner（扫描投放目录）、Maker（ffmpeg 制作）、MusicPicker（B站官方曲库）、Uploader（**bilitool `UploadController` 薄封装**）、Scheduler（20:00 触发）。
 
-**Tech Stack:** Python 3.14（Termux，unittest 无 pytest）、ffmpeg 8.1.2、requests 2.34.2、B站官方 Web 投稿接口。
+**Tech Stack:** Python 3.14（Termux，unittest 无 pytest）、ffmpeg 8.1.2、requests 2.34.2、**bilitool 0.1.3（`pip install bilitool`，上传/登录内核）**。
 
 ## Global Constraints
 
 - 投放目录：`/storage/emulated/0/DCIM/bili_publish/`（守护自动创建）
 - 文件名：纯数字 + 扩展名（`12.mp4` 等），该数字即 B站标题
 - 配乐：**只用 B站官方版权曲库**；失败则原声直发，绝不使用第三方音源
-- 投稿：`copyright=1`（原创），标题=数字，简介固定合规文案（含「自制原创」声明）
-- 定时：20:00±2min 发布，本地到点提交
+- 投稿：**上传内核 = bilitool 0.1.3**（GitHub 调研选定，源码实证 `UploadController().upload_video_entry(video_path, yaml=None, copyright, tid, title, desc, tag, source, cover, dynamic, cdn=None)`）；`copyright=1`（原创），标题=数字，简介固定合规文案（含「自制原创」声明）
+- 登录：bilitool `LoginController().login_bilibili(export=True)` 扫码；cookie 由 bilitool 持久化（包内 config.json），守护上传前 `check_bilibili_login()`
+- **bilitool 无定时/私密参数**：20:00±2min 本地到点提交（方案 A 既定），Task 8 验证改为「发布后立即删除」
 - 环境：Termux，`python3 -m unittest`（无 pytest）；`JAVA_TOOL_OPTIONS` 无关
 - 状态机持久化 `state.json`；日志 `logs/daemon.log`；重启不重发
 - 失败重试：单任务最多 3 次，永久失败仅记日志
@@ -526,72 +527,102 @@ git commit -m "feat: 曲库选择与降级逻辑（真实官方接口待Task8）
 
 ---
 
-### Task 5: B站官方投稿接口客户端（Uploader）
+### Task 5: bilitool 上传封装层（Uploader）
 
 **Files:**
 - Create: `bili/uploader.py`
-- Create: `tools/login_scan.py`（扫码登录工具，Task 8 实现完整）
 - Test: `tests/test_uploader.py`（纯 mock；真实联调在测试计划第 3 步手动执行）
 
 **Interfaces:**
-- Consumes: Job `{"ready_mp4","ready_cover","num"}`
-- Produces: `bili/uploader.py::Uploader` 类：
-  - `Uploader(cfg, session=None)` — 构造时校验 cookie 文件与 csrf；缺 cookie 抛 `LoginRequiredError`
-  - `upload(job) -> bvid` — 完整流程：`create → upload → cover → submit`；失败抛 `UploadError`（Task 8 实现）
-- 关键常量：`_CSRF_RE = re.compile(r"bili_jct=([^;]+)")`
+- Consumes: Job `{"ready_mp4","ready_cover","num"}`；bilitool 已安装（`pip install bilitool`）
+- Produces: `bili/uploader.py`：
+  - 常量：`TAG="狗狗日常,汪星人,萌宠"`、`DESC`（合规文案）
+  - 纯函数 `build_title(num) -> str`、`build_desc() -> str`
+  - `login_ok() -> bool` — 调 `LoginController().check_bilibili_login()`
+  - `upload(job, cfg) -> None` — 调 bilitool `UploadController().upload_video_entry(...)`；返回 False 或抛异常 → 抛 `UploadError`；登录失效 → 抛 `LoginRequiredError`
+- 异常：`UploadError`、`LoginRequiredError(UploadError)`
 
-- [ ] **Step 1: 写失败测试（纯函数，可离线）**
+- [ ] **Step 1: 写失败测试（mock bilitool，可离线）**
 
 `tests/test_uploader.py`：
 
 ```python
-import os, tempfile, unittest
-from bili.uploader import Uploader, LoginRequiredError, build_title, build_desc, _extract_csrf
+import tempfile, unittest
+from unittest import mock
+
+from bili.uploader import Uploader, LoginRequiredError, UploadError, build_title, build_desc
+
+def _job():
+    return {"num": 12, "ready_mp4": "/tmp/12.mp4", "ready_cover": "/tmp/12.jpg"}
+
+def _cfg():
+    return {"tid": 169, "copyright": 1}
 
 class TestUploaderPure(unittest.TestCase):
     def test_build_title(self):
         self.assertEqual(build_title(12), "12")
 
     def test_build_desc(self):
-        self.assertIn("自制", build_desc(12))
-        self.assertIn("#汪星人", build_desc(12))
+        self.assertIn("自制", build_desc())
+        self.assertIn("#汪星人", build_desc())
 
-    def test_extract_csrf(self):
-        self.assertEqual(_extract_csrf("a=1; bili_jct=tok; b=2"), "tok")
-        self.assertIsNone(_extract_csrf("no token here"))
+class TestUploader(unittest.TestCase):
+    @mock.patch("bili.uploader.login_ok", return_value=True)
+    @mock.patch("bili.uploader.UploadController")
+    def test_upload_calls_with_params(self, UC, _lk):
+        uc = UC.return_value
+        uc.upload_video_entry.return_value = True
+        Uploader().upload(_job(), _cfg())
+        uc.upload_video_entry.assert_called_once_with(
+            "/tmp/12.mp4", None, 1, 169, "12", mock.ANY,
+            "狗狗日常,汪星人,萌宠", "", "/tmp/12.jpg", "", cdn=None,
+        )
 
-    def test_no_cookie_raises_login_required(self):
-        d = tempfile.TemporaryDirectory()
-        cfg = {"cookie_file": os.path.join(d.name, "nope.json")}
+    @mock.patch("bili.uploader.login_ok", return_value=True)
+    @mock.patch("bili.uploader.UploadController")
+    def test_false_raises_upload_error(self, UC, _lk):
+        UC.return_value.upload_video_entry.return_value = False
+        with self.assertRaises(UploadError):
+            Uploader().upload(_job(), _cfg())
+
+    @mock.patch("bili.uploader.login_ok", return_value=True)
+    @mock.patch("bili.uploader.UploadController")
+    def test_exception_raises_upload_error(self, UC, _lk):
+        UC.return_value.upload_video_entry.side_effect = RuntimeError("net")
+        with self.assertRaises(UploadError):
+            Uploader().upload(_job(), _cfg())
+
+    @mock.patch("bili.uploader.login_ok", return_value=True)
+    @mock.patch("bili.uploader.UploadController")
+    def test_copyright_override_respected(self, UC, _lk):
+        uc = UC.return_value
+        uc.upload_video_entry.return_value = True
+        Uploader().upload(_job(), {"tid": 169, "copyright": 2})
+        self.assertEqual(uc.upload_video_entry.call_args[0][2], 2)
+
+    @mock.patch("bili.uploader.login_ok", return_value=False)
+    @mock.patch("bili.uploader.UploadController")
+    def test_not_logged_in_raises_login_required(self, UC, _lk):
         with self.assertRaises(LoginRequiredError):
-            Uploader(cfg)
-
-    def test_cookie_without_csrf_raises(self):
-        d = tempfile.TemporaryDirectory()
-        p = os.path.join(d.name, "c.json")
-        with open(p, "w") as f:
-            f.write("SESSDATA=abc")
-        with self.assertRaises(LoginRequiredError):
-            Uploader({"cookie_file": p})
+            Uploader().upload(_job(), _cfg())
 ```
-
-（上传链路属网络密集型，真实联调放在 Task 8：用真实文件试传并删除草稿。）
 
 - [ ] **Step 2: 运行确认失败**
 
 Run: `python3 -m unittest tests.test_uploader -v`
 Expected: FAIL（ModuleNotFoundError: bili.uploader）
 
-- [ ] **Step 3: 实现 uploader.py 纯函数 + 骨架**
+- [ ] **Step 3: 实现 uploader.py**
 
 `bili/uploader.py`：
 
 ```python
-"""B站官方投稿接口客户端（Web VU 接口，合规：原创标注）。"""
+"""bilitool 上传封装：官方接口客户端库（合规：copyright=1 原创）。"""
 
-import os, re
+from bilitool import LoginController, UploadController
 
-_CSRF_RE = re.compile(r"bili_jct=([^;]+)")
+TAG = "狗狗日常,汪星人,萌宠"
+DESC = "自制原创狗狗日常视频，配乐使用B站官方授权音乐素材。 #狗狗日常 #汪星人 #萌宠"
 
 class UploadError(Exception):
     pass
@@ -599,47 +630,47 @@ class UploadError(Exception):
 class LoginRequiredError(UploadError):
     pass
 
-def _extract_csrf(cookie_str):
-    m = _CSRF_RE.search(cookie_str or "")
-    return m.group(1) if m else None
-
 def build_title(num):
     return str(num)
 
-DESC = "自制原创狗狗日常视频，配乐使用B站官方授权音乐素材。 #狗狗日常 #汪星人 #萌宠"
-
-def build_desc(num):
+def build_desc():
     return DESC
 
-class Uploader:
-    def __init__(self, cfg, session=None):
-        self.cfg = cfg
-        self.cookie_file = cfg["cookie_file"]
-        if not os.path.isfile(self.cookie_file):
-            raise LoginRequiredError("未登录：先运行 python tools/login_scan.py")
-        self.cookie = open(self.cookie_file).read().strip()
-        token = _extract_csrf(self.cookie)
-        if not token:
-            raise LoginRequiredError("cookie 无法提取 csrf")
-        if session is None:
-            import requests
-            session = requests.Session()
-        self.session = session
+def login_ok():
+    try:
+        return bool(LoginController().check_bilibili_login())
+    except Exception:
+        return False
 
-    def upload(self, job):
-        raise NotImplementedError("Task 8 联调实现：create → upload → cover → submit")
+class Uploader:
+    def __init__(self, controller=None):
+        self.uploader = controller or UploadController()
+
+    def upload(self, job, cfg):
+        """上传成品+封面；失败抛 UploadError。job 需含 ready_mp4/ready_cover，num 可缺省（用 job_id）。"""
+        if not login_ok():
+            raise LoginRequiredError("未登录：先运行 python tools/login_scan.py 扫码")
+        num = int(job.get("num") or job["job_id"])
+        ok = self.uploader.upload_video_entry(
+            job["ready_mp4"], None,
+            cfg.get("copyright", 1), cfg.get("tid", 169),
+            build_title(num), build_desc(),
+            TAG, "", job["ready_cover"], "", cdn=None,
+        )
+        if not ok:
+            raise UploadError("bilitool upload_video_entry returned False")
 ```
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `python3 -m unittest tests.test_uploader -v`
-Expected: 5 tests PASS
+Expected: 7 tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add bili/uploader.py tests/test_uploader.py
-git commit -m "feat: 官方投稿客户端骨架与纯函数"
+git commit -m "feat: bilitool 上传封装层（copyright=1 原创）"
 ```
 
 ---
@@ -652,7 +683,8 @@ git commit -m "feat: 官方投稿客户端骨架与纯函数"
 
 **Interfaces:**
 - Consumes: StateStore、Scanner 结果
-- Produces: `bili/scheduler.py::Scheduler(cfg, store, maker, uploader)`；方法 `tick(now=None) -> list[str]`（执行一轮，返回动作描述）；`should_publish(now, created_time) -> bool`（20:00±2min）
+- Produces: `bili/scheduler.py::Scheduler(cfg, store)`；方法 `tick(now=None) -> dict`（执行一轮，返回动作统计）；`should_publish(now, created_time) -> bool`（20:00±2min）
+- 上传注入：`scheduler.uploader = bili.uploader.Uploader().upload`（Task 7 收拢）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -698,7 +730,7 @@ class TestSched(unittest.TestCase):
             store.init_job("3")
             store.set("3", {"status": "ready", "ready_mp4": d + "/r.mp4"})
             s = Scheduler(cfg={"publish_dir": pub, "done_dir": done}, store=store)
-            s.uploader = lambda job: "BV-test"
+            s.uploader = lambda job, cfg: "BV-test"
             ret = s.tick(now=self.t(20, 1))
             self.assertEqual(ret["published"], 1)
             self.assertEqual(store.get("3")["status"], "done")
@@ -757,7 +789,7 @@ class Scheduler:
             elif j["status"] in (STATUS_READY, STATUS_FAILED) and should_publish(now, j.get("created", 0)):
                 if self.uploader:
                     try:
-                        self.uploader(j)
+                        self.uploader(j, self.cfg)
                         self.store.set(jid, {"status": STATUS_DONE})
                         self._archive_source(jid)
                         result["published"] += 1
@@ -855,8 +887,10 @@ def main(argv=None):
         ready_dir = cfg["ready_dir"]; os.makedirs(ready_dir, exist_ok=True)
         from bili.scheduler import Scheduler
         from bili.state import StateStore
+        from bili.uploader import Uploader
         store = StateStore(cfg.get("state_file", "state.json"))
         sched = Scheduler(cfg, store)
+        sched.uploader = Uploader().upload
         stopping = False
         def on_sig(s, f):
             nonlocal stopping; stopping = True
@@ -885,6 +919,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$ROOT/bili" "$ROOT/tests" "$ROOT/tools" "$ROOT/logs" \
          "$ROOT/ready" "$ROOT/done" "$ROOT/music_cache"
+python3 -m pip install -q bilitool || echo "WARN: bilitool 安装失败，回退自研 Uploader（见 Task 5 说明）"
 if [ ! -f "$ROOT/config.json" ]; then
   cat > "$ROOT/config.json" <<'EOF'
 {
@@ -932,51 +967,27 @@ git commit -m "feat: 常驻守护入口与安装脚本"
 **说明：本任务为手工联调，需要：
 用户扫码登录（个人B站号）→ 曲库搜索 → 制作 → 私密投稿 → 校验 → 删除草稿。**
 
-- [ ] **Step 1: 扫码登录脚本**
+- [ ] **Step 1: 扫码登录脚本（bilitool LoginController）**
 
-`tools/login_scan.py`（调 passport 二维码接口 → 等待扫码 → 存 cookie）：
+`tools/login_scan.py`（调 bilitool TV 二维码 → 等待扫码 → cookie 由 bilitool 持久化 + 导出备份）：
 
 ```python
-"""扫码登录 B站，将 cookie 写入 cfg cookie_file。"""
-import os, sys, time, requests
+"""扫码登录 B站（bilitool 内核），登录态由 bilitool 持久化。"""
+import sys
+sys.path.insert(0, "..")
+from bilitool import LoginController
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from bili import config
-
-cfg = config.load_config(sys.argv[1] if len(sys.argv) > 1 else "config.json")
-s = requests.Session()
-s.headers.update({"User-Agent": "Mozilla/5.0"})
-r = s.get("https://passport.bilibili.com/x/passport-login/qrcode/generate").json()
-key = r["data"]["qrcode_key"]
-print("请用手机 BiliBili App 扫码以下链接：")
-print("  https://passport.bilibili.com/qrcode/qrcode-check?qrcode_key=" + key)
-while True:
-    resp = s.post("https://passport.bilibili.com/x/passport-login/qrcode/poll",
-                  data={"qrcode_key": key}).json()
-    data = resp.get("data", {})
-    if data.get("code") == 0:
-        cookie = "; ".join(f"{k}={v}" for k, v in s.cookies.get_dict().items())
-        open(cfg["cookie_file"], "w").write(cookie)
-        print("登录成功，cookie 已保存")
-        break
-    elif data.get("code") in (86038, 86090):
-        print("二维码已失效，请重跑")
-        sys.exit(1)
-    time.sleep(2)
+LoginController().login_bilibili(export=True)   # 二维码打印于终端；export 生成 cookie.json 备份
+print("登录完成。可用 check_bilibili_login() 复核登录态。")
 ```
+
+Run: `cd /data/data/com.termux/files/usr/tmp/opencode/bili && python3 tools/login_scan.py`（或 `python3 -c "from bilitool import LoginController; LoginController().login_bilibili(export=True)"`）
+注意：login_bilibili 交互式（回车后打印二维码），在 Termux 大窗口运行；二维码也可用打印出的链接在手机 B站 App 内确认。
 
 - [ ] **Step 2: 确认 cookie 有效**
 
-```bash
-python3 -c "
-import requests
-ck=open('cookie.json').read(); h={'Cookie':ck,'User-Agent':'Mozilla/5.0'}
-r=requests.get('https://api.bilibili.com/x/web-interface/nav',headers=h).json()
-print('登录状态:', r['code'], r.get('data',{}).get('uname'))
-"
-```
-
-Expected: code 0 + 用户名
+Run: `python3 -c "from bilitool import LoginController; print(LoginController().check_bilibili_login())"`
+Expected: True + 控制台 bilitool 日志显示登录态
 
 - [ ] **Step 3: 官方曲库搜索验证**
 
@@ -997,18 +1008,19 @@ PY
 
 Expected: 输出 ready/9999.mp4 + 9999.jpg
 
-- [ ] **Step 5: 私密投稿验证（账号真实性验证）**
+- [ ] **Step 5: 投稿验证（账号真实性验证）**
 
-用 Task 5 的 Uploader 上传一份私密稿件（不公开），确认 UUID→上传→封面→submit 全流程返回 edit_now；然后到 B站后台删除草稿。**此步必须真实账号完成一次**，确认 copyright=1（原创）。
+用 Task 5 的 Uploader 上传一份测试稿件（bilitool 无「私密投稿」参数，上传即发布）→ 确认成功（日志出现 bvid）→ **立即到 B站后台删除该稿件**。此步必须真实账号完成一次，确认 `copyright=1`（原创）生效。
 
 - [ ] **Step 6: 定时发布验证**
 
-把 `config.json` 的 `publish_time` 改为当前时间+2min，放入一个测试视频 → 等待守护到点上传 → B站后台确认定时稿件存在且（不公开测试可选）。
+把 `config.json` 的 `publish_time` 改为当前时间+2min，放入一个测试视频 → 等待守护到点上传 → B站后台确认稿件存在（若担心可见性，提前把测试视频设为自己可见后删除）。
 
 - [ ] **Step 7: 上线**
 
 ```bash
-python3 setup.sh          # 装机：目录、扫码登录
+python3 setup.sh          # 装机：目录、依赖(bilitool)、示例 config
+python3 tools/login_scan.py   # 扫码登录（cookie 由 bilitool 持久化 + 导出 cookie.json）
 setsid nohup python3 bili/daemon.py --config config.json >> logs/daemon.out 2>&1 &
 echo started
 ```
@@ -1019,16 +1031,17 @@ Expected: 守护常驻，日志增长，`ps aux | grep daemon` 可见。
 
 ```bash
 git add tools/ bili/music.py bili/uploader.py bili/daemon.py docs/
-git commit -m "feat: 端到端联调补充（真实曲库/上传实现）"
+git commit -m "feat: 端到端联调补充（真实曲库/bilitool 上传实现）"
 ```
 
 ---
 
 ## 风险与假设（实现中确认）
 
-1. **B站官方接口细节**：Task 5/8 的 VU 接口端点与曲库接口以实测为准，若发现 B站在维护/反爬，改用公开的官方文档端；若完全不可用则回退方案为「生成 config 提示用户手动投稿」的 readme 应急说明。
-2. **ffmpeg drawtext 中文字体**：数字标题无中文字体依赖，直接部署。
-3. **`CONFIG` 文件中 `copyright` 默认=1（原创）**；`tid` 需实现时查分区表（动物圈-汪星人通常是 169，实现时用 `https://member.bilibili.com/api/x/entry/part/list` 核对）。
-4. Termux 后台常驻依赖 `termux-services` 或 `setsid nohup`；重启手机需手动拉起（可选 termux-boot-autostart）。
-5. B站对内容审核：视频为个人狗日常，合法；简介带 # 标签合规。
-6. **不纳入设计**：微信通道、第三方音源、biliup-rs——已废弃。
+1. **bilitool 可用性**：`pip install bilitool`（0.1.3）为纯 Python（依赖 requests+qrcode），Termux 可直接装；若安装失败或上传链路异常 → 回退自研 Uploader（`build_title/build_desc` 为独立纯函数，实现与测试只需将 Task 5 的 bilitool 调用替换为自研 VU 客户端，改动面仅 uploader.py 一个文件）。
+2. **bilitool 无私密/定时参数**：Task 8 验证流程已调整为「发布后立即删除」；定时靠本地 20:00 到点提交（方案 A 既定，无影响）。
+3. **ffmpeg drawtext 中文字体**：数字标题无中文字体依赖，直接部署。
+4. **`copyright` 默认=1（原创）**；`tid` 需实现时查分区表（动物圈-汪星人通常是 169，实现时用 `https://member.bilibili.com/api/x/entry/part/list` 核对）。
+5. Termux 后台常驻依赖 `termux-services` 或 `setsid nohup`；重启手机需手动拉起（可选 termux-boot-autostart）。
+6. B站对内容审核：视频为个人狗日常，合法；简介带 # 标签合规。
+7. **不纳入设计**：微信通道、第三方音源、biliup-rs、自研 VU 接口客户端——已废弃/已替换为 bilitool。
