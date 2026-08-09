@@ -8,3 +8,23 @@ state.json
 cookie.json
 smoke.json
 .smoke/
+
+# 接口探索产物（不入库）
+ccchunks/
+cc*.js
+audio_app.js
+audio_manifest.js
+unm_*.js
+unm_req.js
+bilibili_musicdl.py
+baudio1.py
+bmain.py
+bilibili_un
+bilibili_un2
+*.md.tmp
+jd*.json
+ghsearch.json
+sr2.md
+search_request.md
+music_list.md
+musicstream_url.md

@@ -8,6 +8,7 @@ DEFAULT_CONFIG = {
     "ready_dir": "ready",
     "done_dir": "done",
     "cookie_file": "cookie.json",
+    "music_dir": "music_cache",
     "copyright": 1,
     "title_template": "{num}",
     "desc": "自制原创 · 狗狗日常 #狗狗日常 #汪星人 #萌宠",
