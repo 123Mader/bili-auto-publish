@@ -15,7 +15,8 @@ def run_once(sched):
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "config.json"))
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p.add_argument("--config", default=os.path.join(root, "config.json"))
     args = p.parse_args(argv)
     cfg = json.load(open(args.config))
     logfile = cfg.get("log_file", "logs/daemon.log")
