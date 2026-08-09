@@ -94,11 +94,8 @@ class Uploader:
         key = _wbi_key(session, cookies)
         payload = {
             "cover": cover_url,
-            "cover43": "",
             "title": title,
             "copyright": cfg.get("copyright", 1),
-            "ai_cover": False,
-            "is_ab_cover": False,
             "tid": cfg.get("tid", 169),
             "tag": TAG,
             "desc_format_id": 0,

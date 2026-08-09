@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
     "copyright": 1,
     "title_template": "{num}",
     "desc": "自制原创 · 狗狗日常 #狗狗日常 #汪星人 #萌宠",
-    "tid": 1,
+    "tid": 169,
 }
 
 def load_config(path):
