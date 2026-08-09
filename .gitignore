@@ -6,6 +6,7 @@ done/
 music_cache/
 state.json
 cookie.json
+config.json
 smoke.json
 .smoke/
 

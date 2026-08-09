@@ -1,0 +1,13 @@
+{
+  "publish_time": "20:00",
+  "interval": 300,
+  "publish_dir": "/storage/emulated/0/DCIM/bili_publish",
+  "ready_dir": "ready",
+  "done_dir": "done",
+  "cookie_file": "cookie.json",
+  "state_file": "state.json",
+  "log_file": "logs/daemon.log",
+  "music_dir": "music_cache",
+  "copyright": 1,
+  "tid": 169
+}
