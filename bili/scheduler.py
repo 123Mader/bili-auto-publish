@@ -7,8 +7,14 @@ from bili.state import (
     STATUS_UPLOADED, STATUS_DONE, STATUS_FAILED,
 )
 
-def should_publish(now, created):
-    return now.hour == 20 and 0 <= now.minute <= 2
+def should_publish(now, created, publish_time="20:00"):
+    """到点窗口 [publish_time, +2min] 内返回 True。"""
+    try:
+        h, m = map(int, str(publish_time).split(":"))
+    except (ValueError, AttributeError):
+        h, m = 20, 0
+    start = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    return start <= now <= start + datetime.timedelta(minutes=2)
 
 class Scheduler:
     def __init__(self, cfg, store):
@@ -39,12 +45,13 @@ class Scheduler:
                                           "ready_cover": out.get("ready_cover", "")})
                 except Exception as e:
                     self._fail(j, str(e))
-            elif j["status"] in (STATUS_READY, STATUS_FAILED) and should_publish(now, j.get("created", 0)):
+            elif j["status"] in (STATUS_READY, STATUS_FAILED) and should_publish(
+                    now, j.get("created", 0), self.cfg.get("publish_time", "20:00")):
                 if self.uploader:
                     try:
                         filename, cover_url = self.uploader.upload(j, self.cfg)
-                        self.uploader.publish(filename, cover_url, int(jid), self.cfg)
-                        self.store.set(jid, {"status": STATUS_DONE})
+                        aid, bvid = self.uploader.publish(filename, cover_url, int(jid), self.cfg)
+                        self.store.set(jid, {"status": STATUS_DONE, "aid": aid, "bvid": bvid})
                         self._archive_source(jid)
                         result["published"] += 1
                     except Exception as e:

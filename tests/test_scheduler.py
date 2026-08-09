@@ -12,6 +12,13 @@ class TestSched(unittest.TestCase):
         self.assertFalse(should_publish(self.t(19, 59), created=1))
         self.assertFalse(should_publish(self.t(20, 5), created=1))
 
+    def test_should_publish_custom_time(self):
+        self.assertTrue(should_publish(self.t(20, 1), created=1, publish_time="20:00"))
+        self.assertTrue(should_publish(self.t(14, 32), created=1, publish_time="14:32"))
+        self.assertFalse(should_publish(self.t(14, 35), created=1, publish_time="14:32"))
+        self.assertTrue(should_publish(self.t(0, 1), created=1, publish_time="0:0"))
+        self.assertTrue(should_publish(self.t(20, 1), created=1, publish_time="bad"))
+
     def test_tick_no_jobs(self):
         with tempfile.TemporaryDirectory() as d:
             store = StateStore(os.path.join(d, "s.json"))
@@ -40,6 +47,7 @@ class TestSched(unittest.TestCase):
             s = Scheduler(cfg={"publish_dir": pub, "done_dir": done}, store=store)
             up = mock.Mock()
             up.upload.return_value = ("fname", "http://cover.jpg")
+            up.publish.return_value = (117063259522500, "BV-test")
             s.uploader = up
             ret = s.tick(now=self.t(20, 1))
             self.assertEqual(ret["published"], 1)
