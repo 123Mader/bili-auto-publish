@@ -30,8 +30,10 @@ class Scheduler:
             jid = j["job_id"]
             if j["status"] == STATUS_PENDING:
                 try:
+                    from bili.music import pick_music
+                    mp = pick_music({**self.cfg, "num": int(jid)})
                     out = self.maker(job=scanner_lookup(self.cfg["publish_dir"], jid),
-                                     cfg=self.cfg)
+                                     cfg=self.cfg, music_path=mp)
                     self.store.set(jid, {"status": STATUS_READY,
                                           "ready_mp4": out["ready_mp4"],
                                           "ready_cover": out.get("ready_cover", "")})

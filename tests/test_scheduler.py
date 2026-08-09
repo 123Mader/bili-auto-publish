@@ -23,7 +23,7 @@ class TestSched(unittest.TestCase):
             open(os.path.join(pub, "3.mp4"), "w").close()
             store = StateStore(os.path.join(d, "s.json"))
             s = Scheduler(cfg={"publish_dir": pub, "ready_dir": os.path.join(d, "ready")}, store=store)
-            s.maker = lambda job, cfg: {"ready_mp4": d + "/r.mp4", "ready_cover": d + "/r.jpg"}
+            s.maker = lambda job, cfg, music_path=None: {"ready_mp4": d + "/r.mp4", "ready_cover": d + "/r.jpg"}
             ret = s.tick(now=self.t(10, 0))
             self.assertEqual(ret["started"], 1)
             self.assertEqual(store.get("3")["status"], "ready")
