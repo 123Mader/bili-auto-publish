@@ -11,6 +11,16 @@ smoke.json
 
 # 接口探索产物（不入库）
 ccchunks/
+# videoup/风控 SDK 探索产物
+videoup_*.js
+videoup*.html
+upload_frame.html
+bili_sc_sdk.js
+bilibili_un.js
+upload_api.md
+tree*.json
+cc_list.json
+gitee_upload.json
 cc*.js
 audio_app.js
 audio_manifest.js
