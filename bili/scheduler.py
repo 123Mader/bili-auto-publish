@@ -42,7 +42,8 @@ class Scheduler:
             elif j["status"] in (STATUS_READY, STATUS_FAILED) and should_publish(now, j.get("created", 0)):
                 if self.uploader:
                     try:
-                        self.uploader(j, self.cfg)
+                        filename, cover_url = self.uploader.upload(j, self.cfg)
+                        self.uploader.publish(filename, cover_url, int(jid), self.cfg)
                         self.store.set(jid, {"status": STATUS_DONE})
                         self._archive_source(jid)
                         result["published"] += 1

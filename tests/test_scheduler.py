@@ -1,4 +1,5 @@
 import datetime, os, tempfile, unittest
+from unittest import mock
 from bili.scheduler import Scheduler, should_publish
 from bili.state import StateStore
 
@@ -37,7 +38,9 @@ class TestSched(unittest.TestCase):
             store.init_job("3")
             store.set("3", {"status": "ready", "ready_mp4": d + "/r.mp4"})
             s = Scheduler(cfg={"publish_dir": pub, "done_dir": done}, store=store)
-            s.uploader = lambda job, cfg: "BV-test"
+            up = mock.Mock()
+            up.upload.return_value = ("fname", "http://cover.jpg")
+            s.uploader = up
             ret = s.tick(now=self.t(20, 1))
             self.assertEqual(ret["published"], 1)
             self.assertEqual(store.get("3")["status"], "done")

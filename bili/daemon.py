@@ -26,7 +26,7 @@ def main(argv=None):
     from bili.uploader import Uploader
     store = StateStore(cfg.get("state_file", "state.json"))
     sched = Scheduler(cfg, store)
-    sched.uploader = Uploader().upload
+    sched.uploader = Uploader()
     stopping = False
     def on_sig(s, f):
         nonlocal stopping; stopping = True
