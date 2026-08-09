@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+logs/
+ready/
+done/
+music_cache/
+state.json
+cookie.json
+smoke.json
+.smoke/
